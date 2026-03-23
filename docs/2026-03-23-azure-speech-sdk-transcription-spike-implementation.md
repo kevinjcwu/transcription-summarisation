@@ -271,10 +271,55 @@ All roles are assigned to the user's Azure AD identity (from `az login`).
 | Concern | How It's Handled |
 |---|---|
 | Audio recording | ❌ No audio is stored — streams through memory only |
-| Speaker identification | ❌ Diarization disabled — transcript is anonymized |
+| Speaker identification | ⚠️ Anonymous labels only (Speaker 1, Speaker 2) — no names, no voice profiles stored |
 | Transcript persistence | ❌ In-memory only — gone when browser tab closes |
 | API key exposure | ❌ No API keys — Azure AD token auth throughout |
 | Data export | ✅ Optional — user clicks "Export" to save notes locally |
+
+---
+
+## Speaker Diarization
+
+### Implementation
+
+Speaker diarization was added by swapping `SpeechRecognizer` → `ConversationTranscriber` in the Azure Speech SDK. This enables the service to distinguish between different speakers using real-time voice clustering — no enrollment or voice profile storage required.
+
+**Key changes:**
+
+| Component | Before | After |
+|---|---|---|
+| SDK class | `sdk.SpeechRecognizer` | `sdk.ConversationTranscriber` |
+| Events | `recognizing` / `recognized` | `transcribing` / `transcribed` |
+| Start/stop | `startContinuousRecognitionAsync` | `startTranscribingAsync` |
+| Speaker data | Not available | `e.result.speakerId` (e.g., "Guest-1") |
+| WebSocket messages | `{ type, text }` | `{ type, text, speaker }` |
+
+**Speaker labels** are normalized from Azure's `"Guest-1"` format to `"Speaker 1"` for display. The transcript renders as:
+
+```
+[Speaker 1]: I think we should go with PostgreSQL.
+[Speaker 2]: What about the migration timeline?
+[Speaker 1]: We could start next week.
+```
+
+### Known Limitations of Diarization
+
+| Limitation | Description |
+|---|---|
+| **Short interjections** | Brief comments (< 2 seconds) may be attributed to the wrong speaker. Azure's model groups short utterances with the surrounding dominant speaker. This is the same limitation present in Microsoft Teams transcription. |
+| **No expected speaker count** | Cannot pre-configure "there are N speakers" — Azure auto-detects. |
+| **No sensitivity tuning** | No parameter to control how aggressively the model separates speakers. |
+| **No speaker enrollment** | All diarization is real-time voice clustering. Cannot pre-register voice profiles. |
+| **Mic quality dependency** | Speaker separation accuracy improves significantly with conference-grade microphones vs laptop mics. |
+| **Similar voices** | Speakers with very similar vocal characteristics may be grouped as one speaker. |
+
+### What Improves Diarization Accuracy
+
+- Higher quality / conference microphone (better spatial separation)
+- Speakers with distinct voice profiles (pitch, cadence, tone)
+- Longer utterances (2+ seconds per turn)
+- Clearer turn-taking (less overlapping speech)
+- Lower background noise
 
 ---
 
@@ -286,3 +331,4 @@ All roles are assigned to the user's Azure AD identity (from `az login`).
 - **No "missed topics" feature** — future enhancement requiring external data source
 - **No authentication on the webapp** — anyone with localhost access can use it
 - **Token expiry edge case** — if `az login` session expires, server needs restart
+- **Diarization accuracy** — short interjections may be attributed to the wrong speaker (Azure Speech model limitation)

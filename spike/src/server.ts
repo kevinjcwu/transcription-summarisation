@@ -83,6 +83,35 @@ app.post("/api/summarize", async (req: Request, res: Response) => {
   }
 });
 
+// Final comprehensive summarization using the full transcript
+app.post("/api/summarize-full", async (req: Request, res: Response) => {
+  try {
+    const { fullTranscript } = req.body as { fullTranscript: string };
+
+    const completion = await openai.chat.completions.create({
+      model: config.openai.deployment,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: `Full meeting transcript:\n${fullTranscript}` },
+      ],
+      temperature: 0.3,
+      max_tokens: 2000,
+    });
+
+    const content = completion.choices[0].message.content?.trim();
+    if (!content) {
+      throw new Error("Empty response from OpenAI");
+    }
+
+    const notes: MeetingNotes = JSON.parse(content);
+    res.json(notes);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Full summarize error:", message);
+    res.status(500).json({ error: message });
+  }
+});
+
 // ── Speech recognition helpers ─────────────────────────────────────────
 
 function buildSpeechEndpoint(): URL {
@@ -98,11 +127,11 @@ function buildSpeechEndpoint(): URL {
 }
 
 interface SpeechResources {
-  recognizer: sdk.SpeechRecognizer;
+  transcriber: sdk.ConversationTranscriber;
   pushStream: sdk.PushAudioInputStream;
 }
 
-function createSpeechRecognizer(authToken: string): SpeechResources {
+function createConversationTranscriber(authToken: string): SpeechResources {
   const speechConfig = sdk.SpeechConfig.fromEndpoint(buildSpeechEndpoint());
   speechConfig.authorizationToken = authToken;
 
@@ -111,14 +140,16 @@ function createSpeechRecognizer(authToken: string): SpeechResources {
     sdk.AudioStreamFormat.getWaveFormatPCM(sampleRate, bitsPerSample, channels)
   );
   const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
-  const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+  const transcriber = new sdk.ConversationTranscriber(speechConfig, audioConfig);
 
-  return { recognizer, pushStream };
+  return { transcriber, pushStream };
 }
 
 interface WsMessage {
   type: "ready" | "recognizing" | "recognized" | "error";
   text?: string;
+  speaker?: string;
+  timestamp?: string;
   error?: string;
 }
 
@@ -126,6 +157,19 @@ function sendToClient(ws: WebSocket, message: WsMessage): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
   }
+}
+
+function formatSpeakerLabel(speakerId: string): string {
+  // Azure returns "Guest-1", "Guest-2" etc. — normalize to "Speaker 1", "Speaker 2"
+  const match = speakerId.match(/(\d+)/);
+  return match ? `Speaker ${match[1]}` : speakerId;
+}
+
+function formatElapsedTime(startTime: number): string {
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 // ── WebSocket server ───────────────────────────────────────────────────
@@ -136,30 +180,35 @@ wss.on("connection", async (ws: WebSocket) => {
   console.log("Client connected for speech recognition");
 
   let tokenInterval: ReturnType<typeof setInterval> | null = null;
+  const meetingStartTime = Date.now();
 
   try {
     const tokenResponse = await credential.getToken(COGNITIVE_SERVICES_SCOPE);
-    const { recognizer, pushStream } = createSpeechRecognizer(
+    const { transcriber, pushStream } = createConversationTranscriber(
       tokenResponse.token
     );
 
-    recognizer.sessionStarted = (_s, e) => {
+    transcriber.sessionStarted = (_s, e) => {
       console.log("Speech session started:", e.sessionId);
     };
 
-    recognizer.recognizing = (_s, e) => {
-      console.log("Recognizing:", e.result.text);
-      sendToClient(ws, { type: "recognizing", text: e.result.text });
+    transcriber.transcribing = (_s, e) => {
+      const speaker = formatSpeakerLabel(e.result.speakerId);
+      const timestamp = formatElapsedTime(meetingStartTime);
+      console.log(`[${timestamp}] Transcribing [${speaker}]:`, e.result.text);
+      sendToClient(ws, { type: "recognizing", text: e.result.text, speaker, timestamp });
     };
 
-    recognizer.recognized = (_s, e) => {
+    transcriber.transcribed = (_s, e) => {
       if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
-        console.log("Recognized:", e.result.text);
-        sendToClient(ws, { type: "recognized", text: e.result.text });
+        const speaker = formatSpeakerLabel(e.result.speakerId);
+        const timestamp = formatElapsedTime(meetingStartTime);
+        console.log(`[${timestamp}] Transcribed [${speaker}]:`, e.result.text);
+        sendToClient(ws, { type: "recognized", text: e.result.text, speaker, timestamp });
       }
     };
 
-    recognizer.canceled = (_s, e) => {
+    transcriber.canceled = (_s, e) => {
       console.log(
         "Speech canceled:",
         sdk.CancellationReason[e.reason],
@@ -173,13 +222,13 @@ wss.on("connection", async (ws: WebSocket) => {
       }
     };
 
-    recognizer.startContinuousRecognitionAsync(
+    transcriber.startTranscribingAsync(
       () => {
-        console.log("✅ Speech recognition started (Azure Speech SDK)");
+        console.log("✅ Conversation transcription started (Azure Speech SDK with diarization)");
         sendToClient(ws, { type: "ready" });
       },
       (err) => {
-        console.error("❌ Speech start error:", err);
+        console.error("❌ Transcription start error:", err);
         sendToClient(ws, { type: "error", error: String(err) });
       }
     );
@@ -189,8 +238,8 @@ wss.on("connection", async (ws: WebSocket) => {
         pushStream.write(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
       } else if (data.toString() === WS_MESSAGE_STOP) {
         pushStream.close();
-        recognizer.stopContinuousRecognitionAsync(
-          () => recognizer.close(),
+        transcriber.stopTranscribingAsync(
+          () => transcriber.close(),
           (err) => console.error("Stop error:", err)
         );
       }
@@ -200,7 +249,7 @@ wss.on("connection", async (ws: WebSocket) => {
     tokenInterval = setInterval(async () => {
       try {
         const newToken = await credential.getToken(COGNITIVE_SERVICES_SCOPE);
-        recognizer.authorizationToken = newToken.token;
+        transcriber.authorizationToken = newToken.token;
         console.log("Token refreshed");
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -214,10 +263,10 @@ wss.on("connection", async (ws: WebSocket) => {
       try {
         pushStream.close();
       } catch (_) {}
-      recognizer.stopContinuousRecognitionAsync(
+      transcriber.stopTranscribingAsync(
         () => {
           try {
-            recognizer.close();
+            transcriber.close();
           } catch (_) {}
         },
         () => {}

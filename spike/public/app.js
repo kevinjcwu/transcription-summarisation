@@ -17,6 +17,8 @@ let currentNotes = null;
 let isProcessing = false;
 let lastSpeechTime = 0;
 let pauseChecker = null;
+let meetingStartTime = null;
+let meetingTimerInterval = null;
 
 // ── DOM helpers ────────────────────────────────────────────────────────
 
@@ -34,6 +36,21 @@ function scrollTranscript() {
   bar.scrollTop = bar.scrollHeight;
 }
 
+function startMeetingTimer() {
+  meetingTimerInterval = setInterval(() => {
+    if (!meetingStartTime) return;
+    const elapsed = Math.floor((Date.now() - meetingStartTime) / 1000);
+    const mins = String(Math.floor(elapsed / 60)).padStart(2, "0");
+    const secs = String(elapsed % 60).padStart(2, "0");
+    setStatus(`Listening... ${mins}:${secs}`, true);
+  }, 1000);
+}
+
+function stopMeetingTimer() {
+  if (meetingTimerInterval) clearInterval(meetingTimerInterval);
+  meetingTimerInterval = null;
+}
+
 function renderList(id, items) {
   const ul = document.getElementById(id);
   if (!items || items.length === 0) {
@@ -49,6 +66,21 @@ function updateDashboard(notes) {
   renderList("keyPoints", notes.keyPoints);
   renderList("decisions", notes.decisions);
   renderList("actionItems", notes.actionItems);
+}
+
+function clearSession() {
+  fullTranscript = "";
+  transcriptBuffer = "";
+  currentNotes = null;
+  meetingStartTime = null;
+  document.getElementById("liveTranscript").textContent = "—";
+  document.getElementById("exportBtn").style.display = "none";
+  document.getElementById("exportTranscriptBtn").style.display = "none";
+  document.getElementById("clearBtn").style.display = "none";
+  renderList("keyPoints", []);
+  renderList("decisions", []);
+  renderList("actionItems", []);
+  setStatus("Ready", false);
 }
 
 // ── Summarization ──────────────────────────────────────────────────────
@@ -85,7 +117,7 @@ function startChunkTimers() {
       Date.now() - lastSpeechTime > PAUSE_THRESHOLD_MS &&
       transcriptBuffer.trim()
     ) {
-      console.log("Pause detected — triggering summarization. Buffer:", transcriptBuffer.substring(0, 50) + "...");
+      console.log("Pause detected — triggering summarization.");
       lastSpeechTime = 0;
       summarizeChunk();
     }
@@ -146,26 +178,36 @@ function stopAudioCapture() {
 // ── WebSocket message handling ─────────────────────────────────────────
 
 function handleWsMessage(event) {
-  const msg = JSON.parse(event.data);
+  let msg;
+  try {
+    msg = JSON.parse(event.data);
+  } catch (_) {
+    console.warn("Received malformed WebSocket message");
+    return;
+  }
 
   switch (msg.type) {
     case "ready":
       console.log("✅ Azure Speech SDK ready");
       setStatus("Listening...", true);
       document.getElementById("endBtn").disabled = false;
+      meetingStartTime = Date.now();
+      startMeetingTimer();
       startAudioCapture();
       break;
 
     case "recognizing":
       document.getElementById("liveTranscript").textContent =
-        fullTranscript + msg.text;
+        fullTranscript + (msg.timestamp ? `[${msg.timestamp}] ` : "") + (msg.speaker ? `[${msg.speaker}]: ` : "") + msg.text;
       scrollTranscript();
       lastSpeechTime = Date.now();
       break;
 
     case "recognized":
-      fullTranscript += msg.text + " ";
-      transcriptBuffer += msg.text + " ";
+      const time = msg.timestamp ? `[${msg.timestamp}] ` : "";
+      const speaker = msg.speaker ? `[${msg.speaker}]: ` : "";
+      fullTranscript += time + speaker + msg.text + "\n";
+      transcriptBuffer += (msg.speaker ? `[${msg.speaker}]: ` : "") + msg.text + " ";
       document.getElementById("liveTranscript").textContent = fullTranscript;
       scrollTranscript();
       lastSpeechTime = Date.now();
@@ -214,26 +256,39 @@ async function endMeeting() {
   setStatus("Ending meeting...", false);
   document.getElementById("endBtn").disabled = true;
 
-  // Stop timers but keep audio alive until final summarization
   stopChunkTimers();
+  stopMeetingTimer();
 
-  // Final summarization of any remaining transcript
-  if (transcriptBuffer.trim()) {
-    await summarizeChunk();
-  }
-
-  // Now stop audio and close WebSocket
-  if (processorNode) { processorNode.disconnect(); processorNode = null; }
-  if (audioContext) { audioContext.close(); audioContext = null; }
-  if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
+  // Stop audio capture and close WebSocket
+  stopAudioCapture();
 
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(WS_MESSAGE_STOP);
     setTimeout(() => ws.close(), 2000);
   }
 
+  // Final comprehensive summarization using the full transcript
+  if (fullTranscript.trim()) {
+    setStatus("Generating final summary...", false);
+    try {
+      const resp = await fetch("/api/summarize-full", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fullTranscript }),
+      });
+      if (resp.ok) {
+        const notes = await resp.json();
+        updateDashboard(notes);
+      }
+    } catch (err) {
+      console.warn("Full summarization failed, keeping chunked notes:", err.message);
+    }
+  }
+
   setStatus("Meeting ended", false);
   document.getElementById("exportBtn").style.display = "inline-block";
+  document.getElementById("exportTranscriptBtn").style.display = "inline-block";
+  document.getElementById("clearBtn").style.display = "inline-block";
   document.getElementById("startBtn").disabled = false;
 }
 
@@ -253,5 +308,15 @@ function exportNotes() {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "meeting-notes.md";
+  a.click();
+}
+
+function exportTranscript() {
+  if (!fullTranscript.trim()) return;
+
+  const blob = new Blob([fullTranscript], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "meeting-transcript.txt";
   a.click();
 }
