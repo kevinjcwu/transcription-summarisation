@@ -1,0 +1,108 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0f0f0f;
+  color: #e0e0e0;
+  padding: 24px;
+}
+
+h1 { font-size: 1.5rem; margin-bottom: 8px; }
+
+.subtitle { color: #888; margin-bottom: 24px; font-size: 0.9rem; }
+
+/* ── Controls ─────────────────────────────────────────────────────── */
+
+.controls {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  align-items: center;
+}
+
+button {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+#startBtn { background: #2ea043; color: #fff; }
+#startBtn:hover { background: #3fb950; }
+#startBtn:disabled,
+#endBtn:disabled { background: #333; color: #666; cursor: not-allowed; }
+#endBtn { background: #da3633; color: #fff; }
+#endBtn:hover { background: #f85149; }
+#exportBtn { background: #1f6feb; color: #fff; }
+#exportBtn:hover { background: #388bfd; }
+
+/* ── Status indicator ─────────────────────────────────────────────── */
+
+.status { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; background: #666; }
+.status-dot.active { background: #2ea043; animation: pulse 1.5s infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Dashboard cards ──────────────────────────────────────────────── */
+
+.dashboard {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 16px;
+  min-height: 200px;
+}
+
+.card h2 {
+  font-size: 1rem;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card ul { list-style: none; padding: 0; }
+
+.card li {
+  padding: 6px 0;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.card li:last-child { border-bottom: none; }
+
+.empty-state { color: #484f58; font-style: italic; font-size: 0.85rem; }
+
+/* ── Transcript bar ───────────────────────────────────────────────── */
+
+.transcript-bar {
+  margin-top: 16px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 0.8rem;
+  color: #8b949e;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.transcript-bar .label { color: #58a6ff; font-weight: 600; margin-bottom: 4px; }
+
+/* ── Error display ────────────────────────────────────────────────── */
+
+.error { color: #f85149; margin-top: 8px; font-size: 0.85rem; }

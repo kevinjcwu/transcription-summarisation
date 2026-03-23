@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meeting Note-Taker — Spike</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <h1>🎙️ Meeting Note-Taker</h1>
+  <p class="subtitle">AI-powered live meeting notes — no recording, no speaker identification</p>
+
+  <div class="controls">
+    <button id="startBtn" onclick="startMeeting()">▶ Start Meeting</button>
+    <button id="endBtn" onclick="endMeeting()" disabled>⏹ End Meeting</button>
+    <button id="exportBtn" onclick="exportNotes()" style="display:none">📥 Export Notes</button>
+    <div class="status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Ready</span>
+    </div>
+  </div>
+
+  <div id="error" class="error"></div>
+
+  <div class="dashboard">
+    <div class="card">
+      <h2>📌 Key Points</h2>
+      <ul id="keyPoints"><li class="empty-state">Waiting for meeting to start...</li></ul>
+    </div>
+    <div class="card">
+      <h2>✅ Decisions</h2>
+      <ul id="decisions"><li class="empty-state">Waiting for meeting to start...</li></ul>
+    </div>
+    <div class="card">
+      <h2>📋 Action Items</h2>
+      <ul id="actionItems"><li class="empty-state">Waiting for meeting to start...</li></ul>
+    </div>
+  </div>
+
+  <div class="transcript-bar">
+    <div class="label">Live transcript</div>
+    <div id="liveTranscript">—</div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
